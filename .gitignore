@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Project Specific
+users.db
+app/users.db
+update_*.py
+cleanup.py
+stitch.html
+debug_*.html
+header_part.txt
+tailwind_config.txt
+extract_config.py
+layout_wrapper.py
+test_*.py
+
+# OS
+.DS_Store
+Thumbs.db
