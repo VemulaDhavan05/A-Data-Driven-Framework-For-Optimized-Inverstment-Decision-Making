@@ -6,19 +6,35 @@ venv/
 env/
 .env
 
-# Project Specific
-users.db
+# Database
 app/users.db
-update_*.py
-cleanup.py
-stitch.html
-debug_*.html
-header_part.txt
-tailwind_config.txt
-extract_config.py
-layout_wrapper.py
-test_*.py
+*.db
 
-# OS
-.DS_Store
-Thumbs.db
+# IDEs
+.vscode/
+.idea/
+
+# Flask
+instance/
+.webassets-cache
+
+# Development Scratch Files (SonarQube Cleanup)
+patch*.py
+splice*.py
+clean_*.py
+cleanup.py
+db_explorer.py
+extract_config.py
+find_cards.py
+fix*.py
+header_part.txt
+layout_wrapper.py
+migrate_db.py
+new_routes.py
+replace_cards.py
+stitch.html
+tailwind_config.txt
+test_*.py
+update_*.py
+view_db.py
+app/debug_*.html

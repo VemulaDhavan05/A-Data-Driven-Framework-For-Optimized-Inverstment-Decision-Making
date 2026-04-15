@@ -1,16 +1,25 @@
 import pandas as pd
-from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import r2_score
 
 # Load dataset
 data = pd.read_csv('data/data.csv')
 
-# Features and target
+# Features (Risk, Years, Capital) and Target (Final Returns)
 X = data[['risk', 'years', 'amount']]
 y = data['returns']
 
-# Train model
-model = LinearRegression()
-model.fit(X, y)
+# Split data: 80% for training, 20% for scientific testing
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Train upgraded model: Random Forest can handle exponential compounding growth
+model = RandomForestRegressor(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+# PROOF: Test the model on unseen data
+y_pred = model.predict(X_test)
+accuracy = r2_score(y_test, y_pred)
 
 # ===== USER INPUT =====
 risk = 3
@@ -47,6 +56,10 @@ else:
     reason = "Long-term investment with asset growth and stable appreciation"
 
 # ===== OUTPUT =====
+print("--- MODEL PROOF OF ACCURACY ---")
+print(f"Validation Accuracy (R-Squared): {accuracy:.4f}")
+print("(A score closer to 1.0 proves the model successfully learned from the dataset)\n")
+
 print("Predicted Total Returns:", round(predicted_return, 2))
 
 print("\n--- Investment Scores ---")
