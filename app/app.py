@@ -298,7 +298,7 @@ def is_valid_email(email):
     
     domain = email.split('@')[-1]
     if domain in disposable_domains or domain in typo_domains:
-        print(f"[AUDIT] BLOCKED: Known fake/typo domain: {domain}")
+        logger.warning("[AUDIT] BLOCKED: Known fake/typo domain: %s", domain)
         return False
 
     # Real-time DNS MX Check
@@ -329,7 +329,7 @@ def generate_otp(user_id, otp_type='login'):
             conn.commit()
         return code
     except Exception as e:
-        print(f"OTP Gen Error: {e}")
+        logger.error("OTP Gen Error: %s", e)
         return None
 
 def verify_otp_logic(user_id, code, otp_type='login'):
@@ -357,7 +357,7 @@ def show_otp_sim(username, code, otp_type, email=None):
         try:
             sent = send_otp_email(email, code, otp_type)
             if sent:
-                print(f"--- REAL OTP SENT TO {email} [{otp_type}]: {code} ---")
+                logger.info("--- REAL OTP SENT TO %s [%s] ---", email, otp_type)
                 res["sent"] = True
             else:
                 res["error"] = "SMTP delivery failed (check terminal for logs)"
@@ -582,10 +582,10 @@ def save_prediction(username, risk, years, amount, best_option, predicted_value,
             conn.commit()
             logger.info("Prediction saved successfully.")
         else:
-            print(f"DEBUG: User {username} not found for saving prediction.")
+            logger.warning("User '%s' not found for saving prediction.", username)
         conn.close()
     except Exception as e:
-        print(f"CRITICAL: Error saving prediction: {e}")
+        logger.error("CRITICAL: Error saving prediction: %s", e)
  
 def get_user_predictions(username):
     try:
@@ -607,7 +607,7 @@ def get_user_predictions(username):
         conn.close()
         return rows
     except Exception as e:
-        print(f"DEBUG: get_user_predictions error: {e}")
+        logger.error("get_user_predictions error: %s", e)
         return []
 
 def get_prediction_by_id(pred_id, username):
@@ -1222,7 +1222,7 @@ def signup():
     if otp_code:
         pending = session.get('pending_signup')
         if not pending or pending['username'] != username:
-            print(f"[SECURITY] Bypassed OTP attempt blocked: {username}")
+            logger.warning("[SECURITY] Bypassed OTP attempt blocked: %s", username)
             return redirect(url_for('auth_page', error='invalid', user=username))
         
         if verify_otp_logic(pending['temp_id'], otp_code, 'signup'):
@@ -1336,7 +1336,7 @@ def request_otp():
                 show_otp_sim(username, code, 'Login Verification', email=user[1])
                 return redirect(url_for('auth_page', status='otp_sent', user=username))
     except Exception as e:
-        print(f"Auth Error: {e}")
+        logger.error("Auth/OTP request error: %s", e)
         return redirect(url_for('auth_page', error='system_busy', user=username))
     return redirect(url_for('auth_page', error='not_found', user=username))
 
@@ -1353,7 +1353,7 @@ def verify_login_otp():
                 session['user'] = username
                 return redirect(url_for('home'))
     except Exception as e:
-        print(f"Verify OTP Error: {e}")
+        logger.error("Verify OTP Error: %s", e)
     return redirect(url_for('auth_page', error='invalid_otp', user=username, status='otp_sent'))
 
 @app.route('/forgot-password', methods=['POST'])
@@ -1677,7 +1677,7 @@ def render_prediction_html(amount, years, risk, results, best, username):
         '<div class="max-w-5xl mx-auto py-4 animate-fade-in">'
 
         # Header
-        '<div class="flex justify-between items-center mb-8">'
+        + '<div class="flex justify-between items-center mb-8">'
         '<div>'
         '<h2 class="text-3xl font-extrabold text-primary tracking-tight font-headline">Prediction Results</h2>'
         f'<p class="text-sm text-on-surface-variant mt-1">&#8377;{amount:,.0f} Capital &nbsp;&bull;&nbsp; {years} Years &nbsp;&bull;&nbsp;'
@@ -1688,7 +1688,7 @@ def render_prediction_html(amount, years, risk, results, best, username):
         '</div>'
 
         # Hero
-        _render_prediction_hero(best, reason, risk_col, risk_label, risk, risk_pct, multiplier, amount, years) +
+        + _render_prediction_hero(best, reason, risk_col, risk_label, risk, risk_pct, multiplier, amount, years) +
 
         # Comparison bars
         '<div class="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-6 shadow-sm mb-8">'
@@ -1709,7 +1709,7 @@ def render_prediction_html(amount, years, risk, results, best, username):
         '</div></div>'
 
         # Chart.js
-        _get_prediction_js(charts_json, alloc_json)
+        + _get_prediction_js(charts_json, alloc_json)
     )
     return result_page
 
