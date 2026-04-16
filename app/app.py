@@ -46,7 +46,7 @@ app.config.update(
 # Alias for legacy code
 app.secret_key = app.config['SECRET_KEY']
  
-# ===== DATABASE =====
+# ===== DATABASE CONFIG =====
 DB_PATH = os.path.join(os.path.dirname(__file__), 'users.db')
 
 @contextmanager
@@ -149,8 +149,7 @@ def get_layout(content, user=None, title="Dashboard"):
 '''
     return html
 
-# Centralized DB Path
-DB_PATH = os.path.join(os.path.dirname(__file__), 'users.db')
+# Centralized DB Initialization
 
 def init_db():
     # Make path absolute relative to this script
@@ -219,7 +218,7 @@ def load_env():
                         key, val = line.strip().split('=', 1)
                         os.environ[key.strip()] = val.strip()
     except Exception as e:
-        print(f"Error loading .env: {e}")
+        logger.error(f"Error loading .env: {e}")
 
 load_env()
 
@@ -232,7 +231,7 @@ SMTP_PASS = os.environ.get('SMTP_PASS', '')
 
 def send_otp_email(target_email, code, otp_type="Verification"):
     if not SMTP_USER or not SMTP_PASS:
-        print(f"WARNING: SMTP credentials not set. Simulated OTP for {target_email}: {code}")
+        logger.warning(f"Simulated OTP for {target_email}: {code}")
         return False
     
     try:
@@ -266,7 +265,7 @@ def send_otp_email(target_email, code, otp_type="Verification"):
             server.send_message(msg)
         return True
     except Exception as e:
-        print(f"CRITICAL: Failed to send email: {e}")
+        logger.error(f"CRITICAL: Failed to send email: {e}")
         return False
 
 # ===== EMAIL VALIDATION =====
@@ -305,12 +304,11 @@ def is_valid_email(email):
     # Real-time DNS MX Check
     try:
         # Check if the domain has Mail Exchanger (MX) records
-        print(f"[AUDIT] Verifying domain integrity for: {domain}...")
         records = dns.resolver.resolve(domain, 'MX')
         if not records:
-            print(f"[AUDIT] REJECTED: {domain} has no MX records.")
+            logger.warning(f"[AUDIT] REJECTED: {domain} has no MX records.")
             return False
-        print(f"[AUDIT] SUCCESS: {domain} is a valid mail-capable domain.")
+        logger.info(f"[AUDIT] SUCCESS: {domain} is a valid mail-capable domain.")
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout, Exception) as e:
         logger.error(f"[AUDIT] FAILED: {domain} DNS error: {e}")
         return False
@@ -347,7 +345,7 @@ def verify_otp_logic(user_id, code, otp_type='login'):
                 return True
         return False
     except Exception as e:
-        print(f"OTP Verify Error: {e}")
+        logger.error(f"OTP Verify Error: {e}")
         return False
 
 def show_otp_sim(username, code, otp_type, email=None):
@@ -371,7 +369,7 @@ def show_otp_sim(username, code, otp_type, email=None):
     app.otp_simulations[username] = res
     
     if not res["sent"]:
-        print(f"--- FALLBACK OTP FOR {username} [{otp_type}]: {code} ---")
+        logger.info(f"--- FALLBACK OTP FOR {username} [{otp_type}]: {code} ---")
 # Redundant key assignment removed for security
 
 # ===== JOB STORE (in-memory, keyed by uuid) =====
@@ -451,8 +449,8 @@ def get_best_stock(risk):
         if results:
             results.sort(key=lambda x: x[3], reverse=True)
             return results[0]
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Stock Fetch Error: {e}")
     return ("RELIANCE.NS", 0.10, 100, 0.10)
 
 def get_stock_chart_data(symbol, years=1):
@@ -576,13 +574,13 @@ def save_prediction(username, risk, years, amount, best_option, predicted_value,
         cur.execute("SELECT id FROM users WHERE username = ?", (username,))
         user = cur.fetchone()
         if user:
-            print(f"DEBUG: Saving prediction for user {username} (ID:{user[0]})")
+            logger.debug(f"Saving prediction for user {username} (ID:{user[0]})")
             cur.execute('''
                 INSERT INTO predictions (user_id, risk_level, investment_years, amount, best_option, predicted_value, annual_rate, full_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ''', (user[0], r_val, y_val, a_val, best_option, p_val, rate_val, full_json))
             conn.commit()
-            print("DEBUG: Prediction saved successfully.")
+            logger.info("Prediction saved successfully.")
         else:
             print(f"DEBUG: User {username} not found for saving prediction.")
         conn.close()
@@ -748,64 +746,54 @@ def _marketing_landing_page():
     '''
     return get_layout(content_html, user=None, title="Welcome")
 
+def _get_auth_toast(error_code, status, user_context):
+    if error_code == 'exists':
+        return '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-3 rounded-xl shadow-lg border border-error/20 font-bold flex items-center gap-2 z-50"><span class="material-symbols-outlined text-error">warning</span> Username already exists!</div>'
+    if error_code == 'invalid':
+        return '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-3 rounded-xl shadow-lg border border-error/20 font-bold flex items-center gap-2 z-50"><span class="material-symbols-outlined text-error">error</span> Invalid credentials.</div>'
+    if error_code == 'invalid_email':
+        return '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-4 rounded-2xl shadow-2xl border border-error/20 font-bold flex flex-col gap-1 z-50"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-error">contact_mail</span> Invalid Email Address</div><div class="text-[10px] opacity-70">Please use a valid, non-disposable email for registration.</div></div>'
+    if error_code == 'invalid_otp':
+        return '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-3 rounded-xl shadow-lg border border-error/20 font-bold flex items-center gap-2 z-50"><span class="material-symbols-outlined text-error">lock_reset</span> Invalid or expired OTP.</div>'
+    if error_code == 'not_found':
+        return '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-3 rounded-xl shadow-lg border border-error/20 font-bold flex items-center gap-2 z-50"><span class="material-symbols-outlined text-error">person_off</span> User not found.</div>'
+    if error_code == 'system_busy':
+        return f'''<div class="absolute top-4 right-4 bg-tertiary-container text-on-tertiary-container px-6 py-4 rounded-2xl shadow-2xl border border-tertiary/20 font-bold flex flex-col gap-1 z-50 animate-pulse">
+            <div class="flex items-center gap-2 text-sm"><span class="material-symbols-outlined text-tertiary">hourglass_empty</span> Protocol Congestion</div>
+            <div class="text-[9px] opacity-70 uppercase tracking-widest font-black">Neural Processor Busy — Please re-attempt in 5s</div>
+        </div>'''
+    
+    if status == 'otp_sent' or status == 'reset_otp_sent':
+        sim = app.otp_simulations.get(user_context, {"code":"???", "sent": False, "error": None})
+        is_sim = not SMTP_USER or not SMTP_PASS
+        failed_send = not is_sim and not sim.get('sent', False)
+        
+        if status == 'otp_sent':
+            mode_label = "Simulation Mode" if is_sim else ("Signal Failed" if failed_send else "Signal Sent")
+            icon = "mail" if (not is_sim and not failed_send) else "developer_mode"
+            color = "bg-primary-container" if (not is_sim and not failed_send) else "bg-error-container"
+            return f'''<div class="absolute top-4 right-4 {color} text-on-primary-container px-6 py-4 rounded-2xl shadow-2xl border border-primary/20 font-bold flex flex-col gap-1 animate-pulse z-50">
+                <div class="flex items-center gap-2"><span class="material-symbols-outlined text-primary">{icon}</span> <span>{mode_label}</span></div>
+                <div class="text-[10px] opacity-70">{"Internal Signal Transmitted" if (is_sim or failed_send) else "Check your inbox for the key"}</div>
+            </div>'''
+        else:
+            mode_label = "Simulation Mode" if is_sim else ("Recovery Failed" if failed_send else "Recovery Sent")
+            return f'''<div class="absolute top-4 right-4 bg-tertiary-container text-on-tertiary-container px-6 py-4 rounded-2xl shadow-2xl border border-tertiary/20 font-bold flex flex-col gap-1 animate-pulse z-50">
+                <div class="flex items-center gap-2"><span class="material-symbols-outlined text-tertiary">lock_open</span> <span>{mode_label}</span></div>
+                <div class="text-[10px] opacity-70">{"Recovery Signal Transmitted" if (is_sim or failed_send) else "Recovery signal broadcasted"}</div>
+            </div>'''
+            
+    if status == 'password_reset_success':
+         return '<div class="absolute top-4 right-4 bg-secondary-container text-on-secondary-container px-6 py-3 rounded-xl shadow-lg border border-secondary/20 font-bold flex items-center gap-2 z-50"><span class="material-symbols-outlined text-secondary">check_circle</span> Password updated successfully.</div>'
+    
+    return ''
+
 @app.route('/auth')
 def auth_page():
     error_code = request.args.get('error')
     status = request.args.get('status')
     user_context = request.args.get('user', '')
-    toast_html = ''
-    
-    if error_code == 'exists':
-        toast_html = '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-3 rounded-xl shadow-lg border border-error/20 font-bold flex items-center gap-2 z-50"><span class="material-symbols-outlined text-error">warning</span> Username already exists!</div>'
-    elif error_code == 'invalid':
-        toast_html = '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-3 rounded-xl shadow-lg border border-error/20 font-bold flex items-center gap-2 z-50"><span class="material-symbols-outlined text-error">error</span> Invalid credentials.</div>'
-    elif error_code == 'invalid_email':
-        toast_html = '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-4 rounded-2xl shadow-2xl border border-error/20 font-bold flex flex-col gap-1 z-50"><div class="flex items-center gap-2"><span class="material-symbols-outlined text-error">contact_mail</span> Invalid Email Address</div><div class="text-[10px] opacity-70">Please use a valid, non-disposable email for registration.</div></div>'
-    elif error_code == 'invalid_otp':
-        toast_html = '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-3 rounded-xl shadow-lg border border-error/20 font-bold flex items-center gap-2 z-50"><span class="material-symbols-outlined text-error">lock_reset</span> Invalid or expired OTP.</div>'
-    elif error_code == 'not_found':
-        toast_html = '<div class="absolute top-4 right-4 bg-error-container text-on-error-container px-6 py-3 rounded-xl shadow-lg border border-error/20 font-bold flex items-center gap-2 z-50"><span class="material-symbols-outlined text-error">person_off</span> User not found.</div>'
-    elif error_code == 'system_busy':
-        toast_html = f'''<div class="absolute top-4 right-4 bg-tertiary-container text-on-tertiary-container px-6 py-4 rounded-2xl shadow-2xl border border-tertiary/20 font-bold flex flex-col gap-1 z-50 animate-pulse">
-            <div class="flex items-center gap-2 text-sm"><span class="material-symbols-outlined text-tertiary">hourglass_empty</span> Protocol Congestion</div>
-            <div class="text-[9px] opacity-70 uppercase tracking-widest font-black">Neural Processor Busy — Please re-attempt in 5s</div>
-        </div>'''
-    
-    if status == 'otp_sent':
-        sim = app.otp_simulations.get(user_context, {"code":"???", "sent": False, "error": None})
-        is_sim = not SMTP_USER or not SMTP_PASS
-        failed_send = not is_sim and not sim.get('sent', False)
-        
-        mode_label = "Simulation Mode" if is_sim else ("Signal Failed" if failed_send else "Signal Sent")
-        icon = "mail" if (not is_sim and not failed_send) else "developer_mode"
-        color = "bg-primary-container" if (not is_sim and not failed_send) else "bg-error-container"
-        
-        toast_html = f'''<div class="absolute top-4 right-4 {color} text-on-primary-container px-6 py-4 rounded-2xl shadow-2xl border border-primary/20 font-bold flex flex-col gap-1 animate-pulse z-50">
-            <div class="flex items-center gap-2">
-                <span class="material-symbols-outlined text-primary">{icon}</span> 
-                <span>{mode_label}</span>
-            </div>
-            {f'<div class="text-[10px] opacity-70">Internal Signal Transmitted (Simulation Mode)</div>' if (is_sim or failed_send) else '<div class="text-[10px] opacity-70">Check your inbox for the key</div>'}
-            {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">Delivery Error: Internal log generated</div>' if failed_send else ''}
-            {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">SMTP Config Required for Email</div>' if is_sim else ''}
-        </div>'''
-    elif status == 'reset_otp_sent':
-        sim = app.otp_simulations.get(user_context, {"code":"???", "sent": False, "error": None})
-        is_sim = not SMTP_USER or not SMTP_PASS
-        failed_send = not is_sim and not sim.get('sent', False)
-        
-        mode_label = "Simulation Mode" if is_sim else ("Recovery Failed" if failed_send else "Recovery Sent")
-        toast_html = f'''<div class="absolute top-4 right-4 bg-tertiary-container text-on-tertiary-container px-6 py-4 rounded-2xl shadow-2xl border border-tertiary/20 font-bold flex flex-col gap-1 animate-pulse z-50">
-            <div class="flex items-center gap-2">
-                <span class="material-symbols-outlined text-tertiary">lock_open</span> 
-                <span>{mode_label}</span>
-            </div>
-            {f'<div class="text-[10px] opacity-70">Recovery Signal Transmitted (Simulation Mode)</div>' if (is_sim or failed_send) else '<div class="text-[10px] opacity-70">Recovery signal broadcasted</div>'}
-            {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">Status: Logged to terminal</div>' if failed_send else ''}
-            {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">SMTP Config Required for Email</div>' if is_sim else ''}
-        </div>'''
-    elif status == 'password_reset_success':
-        toast_html = '<div class="absolute top-4 right-4 bg-secondary-container text-on-secondary-container px-6 py-3 rounded-xl shadow-lg border border-secondary/20 font-bold flex items-center gap-2"><span class="material-symbols-outlined text-secondary">check_circle</span> Password updated successfully.</div>'
+    toast_html = _get_auth_toast(error_code, status, user_context)
 
     content_html = f'''
     <div class="flex items-center justify-center min-h-[calc(100vh-64px)] animate-fade-in relative py-12 px-4 bg-gradient-to-tr from-surface-container-low via-background to-surface-container-low">
@@ -1534,6 +1522,103 @@ def predict():
 
 
 
+def _get_allocation_data(risk):
+    if risk <= 2:
+        return ["Fixed Deposits / Bonds", "Bluechip Equity", "Gold / Sovereign Bonds"], [70, 20, 10], ["#10b981", "#3c5d9c", "#f59e0b"]
+    if risk == 3:
+        return ["Fixed Income", "Diversified Equity", "Real Estate / REITs"], [40, 50, 10], ["#10b981", "#3c5d9c", "#e6a817"]
+    return ["Debt / Liquid Funds", "Aggressive Equity", "High-Yield Alternatives"], [15, 70, 15], ["#10b981", "#ef4444", "#8b5cf6"]
+
+def _render_strategy_block(amount, risk, risk_label, years, alloc_labels, alloc_data, alloc_colors):
+    legend_html = "".join([
+        f'<div class="flex items-center justify-between p-3 bg-surface-container-low rounded-xl mb-2">'
+        f'<div class="flex items-center gap-3"><div class="w-3 h-3 rounded-full" style="background:{c}"></div>'
+        f'<div class="text-sm font-bold text-on-surface-variant font-headline">{l}</div></div>'
+        f'<div class="text-sm font-extrabold text-primary font-mono">{v}%</div></div>'
+        for l, v, c in zip(alloc_labels, alloc_data, alloc_colors)
+    ])
+    
+    return (
+        f'<div class="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-6 shadow-sm mb-8">'
+        f'<h3 class="text-sm font-extrabold text-primary mb-5 flex items-center gap-2">'
+        f'<span class="material-symbols-outlined text-secondary" style="font-variation-settings:\'FILL\' 1">pie_chart</span>'
+        f'Recommended Asset Allocation</h3><div class="flex flex-col md:flex-row items-center gap-8">'
+        f'<div class="w-[200px] h-[200px] shrink-0 relative"><canvas id="allocation-chart"></canvas>'
+        f'<div class="absolute inset-0 flex items-center justify-center flex-col pointer-events-none">'
+        f'<div class="text-[10px] font-bold tracking-widest uppercase text-on-surface-variant/50">Risk Level</div>'
+        f'<div class="text-2xl font-extrabold text-primary">{risk}/5</div></div></div>'
+        f'<div class="flex-1 w-full"><p class="text-sm text-on-surface-variant mb-5 leading-relaxed">'
+        f'Based on your <strong>{risk_label}</strong> investor profile and a {years}-year horizon,'
+        f'we recommend diversifying your &#8377;{amount:,.0f} capital across these core asset classes.</p>'
+        + legend_html + '</div></div></div>'
+    )
+
+def _render_prediction_hero(best, reason, risk_col, risk_label, risk, risk_pct, multiplier, amount, years):
+    return (
+        '<div class="rounded-3xl overflow-hidden shadow-2xl mb-8" style="background:linear-gradient(135deg,#001b44 0%,#002f6c 55%,#006d43 100%)">'
+        '<div class="p-8 flex flex-col md:flex-row justify-between items-start gap-6">'
+        '<div class="flex-1">'
+        '<div class="inline-flex items-center gap-2 bg-white/10 text-secondary-fixed px-3 py-1.5 rounded-full text-[10px] font-extrabold uppercase tracking-widest mb-4">'
+        '<span class="material-symbols-outlined text-sm" style="font-variation-settings:\'FILL\' 1">verified</span>AI Recommended</div>'
+        f'<h3 class="text-2xl font-extrabold text-white mb-3 font-headline line-clamp-2">{escape(best["name"][:70])}{"..." if len(best["name"])>70 else ""}</h3>'
+        f'<p class="text-sm text-white/70 leading-relaxed max-w-xl">{reason}</p>'
+        '<div class="flex flex-wrap items-center gap-8 mt-6">'
+        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Asset Class</div><div class="text-sm font-extrabold text-secondary-fixed">{escape(best["type"])}</div></div>'
+        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Annual CAGR</div><div class="text-sm font-extrabold text-secondary-fixed">{best["rate"]*100:.2f}%</div></div>'
+        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Risk Level</div><div class="text-sm font-extrabold" style="color:{risk_col}">{escape(risk_label)}</div></div>'
+        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Multiplier</div><div class="text-sm font-extrabold text-secondary-fixed">{multiplier}&times;</div></div>'
+        '</div></div>'
+        '<div class="text-right shrink-0">'
+        '<div class="text-[10px] font-bold uppercase text-white/40 tracking-widest mb-2">Projected Wealth</div>'
+        f'<div class="text-5xl font-extrabold text-white font-mono tracking-tight">&#8377;{best["projected"]:,.0f}</div>'
+        f'<div class="mt-3 inline-flex items-center gap-1 bg-secondary/20 text-secondary-fixed border border-secondary/30 px-3 py-1.5 rounded-full text-sm font-extrabold">&#9650; +{best["gain_pct"]:.1f}% over {years} yrs</div>'
+        '</div></div>'
+        '<div class="bg-black/25 px-8 py-4 flex items-center gap-4">'
+        '<span class="text-[10px] font-bold uppercase text-white/40 tracking-widest shrink-0">Risk Tolerance</span>'
+        '<div class="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">'
+        f'<div class="h-full rounded-full" style="width:{risk_pct}%;background:{risk_col}"></div></div>'
+        f'<span class="text-xs font-extrabold shrink-0" style="color:{risk_col}">{risk}/5 &mdash; {risk_label}</span>'
+        '</div></div>'
+    )
+
+def _get_prediction_js(charts_json, alloc_json):
+    return (
+        '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>'
+        '<script>'
+        f'const cData={charts_json};'
+        'const tc=document.getElementById("trend-charts");'
+        'cData.forEach((data,i)=>{'
+        'const wrap=document.createElement("div");'
+        'wrap.innerHTML=`'
+        '<div class="flex items-center gap-2 mb-3">'
+        '<span class="w-2.5 h-2.5 rounded-full inline-block" style="background:${data.color}"></span>'
+        '<span class="text-xs font-extrabold text-primary">${data.type}</span>'
+        '${data.is_best?\'<span class="ml-1 text-[9px] font-bold bg-secondary-container/30 text-secondary px-2 py-0.5 rounded-full uppercase tracking-widest">Top Pick</span>\':""}'
+        '</div>'
+        '<div style="height:130px;position:relative"><canvas id="trend-${i}"></canvas></div>`;'
+        'tc.appendChild(wrap);'
+        'if(!data.prices||data.prices.length<2){'
+        'wrap.querySelector("canvas").parentElement.innerHTML=\'<div class="h-full flex items-center justify-center text-xs text-on-surface-variant/40 italic">Insufficient data</div>\';'
+        'return;}'
+        'const ctx=document.getElementById("trend-"+i).getContext("2d");'
+        'const gr=ctx.createLinearGradient(0,0,0,130);'
+        'gr.addColorStop(0,data.color+"45");gr.addColorStop(1,data.color+"00");'
+        'new Chart(ctx,{type:"line",'
+        'data:{labels:data.dates,datasets:[{data:data.prices,borderColor:data.color,borderWidth:2,backgroundColor:gr,fill:true,tension:0.4,pointRadius:0}]},'
+        'options:{responsive:true,maintainAspectRatio:false,'
+        'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>"&#8377;"+c.parsed.y.toLocaleString("en-IN")}}},'
+        'scales:{x:{display:false},y:{display:false,min:Math.min(...data.prices)*0.97}}}});'
+        '});\n'
+        f'const allocInfo={alloc_json};'
+        'const aCtx=document.getElementById("allocation-chart").getContext("2d");'
+        'new Chart(aCtx, {'
+        '  type: "doughnut",'
+        '  data: { labels: allocInfo.labels, datasets: [{ data: allocInfo.data, backgroundColor: allocInfo.colors, borderWidth: 0, hoverOffset: 4 }] },'
+        '  options: { cutout: "75%", responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }'
+        '});'
+        '</script>'
+    )
+
 def render_prediction_html(amount, years, risk, results, best, username):
     risk_label  = ['','Conservative','Mod. Conservative','Moderate','Mod. Aggressive','Aggressive'][risk]
     risk_col    = '#ef4444' if risk > 3 else ('#f59e0b' if risk == 3 else '#10b981')
@@ -1580,52 +1665,10 @@ def render_prediction_html(amount, years, risk, results, best, username):
             f'</div>'
         )
 
-    if risk <= 2:
-        alloc_labels = ["Fixed Deposits / Bonds", "Bluechip Equity", "Gold / Sovereign Bonds"]
-        alloc_data = [70, 20, 10]
-        alloc_colors = ["#10b981", "#3c5d9c", "#f59e0b"]
-    elif risk == 3:
-        alloc_labels = ["Fixed Income", "Diversified Equity", "Real Estate / REITs"]
-        alloc_data = [40, 50, 10]
-        alloc_colors = ["#10b981", "#3c5d9c", "#e6a817"]
-    else:
-        alloc_labels = ["Debt / Liquid Funds", "Aggressive Equity", "High-Yield Alternatives"]
-        alloc_data = [15, 70, 15]
-        alloc_colors = ["#10b981", "#ef4444", "#8b5cf6"]
-
+    alloc_labels, alloc_data, alloc_colors = _get_allocation_data(risk)
     alloc_json = json.dumps({"labels": alloc_labels, "data": alloc_data, "colors": alloc_colors})
 
-    legend_html = ""
-    for label, val, c in zip(alloc_labels, alloc_data, alloc_colors):
-        legend_html += (
-            f'<div class="flex items-center justify-between p-3 bg-surface-container-low rounded-xl mb-2">'
-            f'<div class="flex items-center gap-3">'
-            f'<div class="w-3 h-3 rounded-full" style="background:{c}"></div>'
-            f'<div class="text-sm font-bold text-on-surface-variant font-headline">{label}</div>'
-            f'</div>'
-            f'<div class="text-sm font-extrabold text-primary font-mono">{val}%</div>'
-            f'</div>'
-        )
-
-    strategy_html = (
-        f'<div class="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-6 shadow-sm mb-8">'
-        f'<h3 class="text-sm font-extrabold text-primary mb-5 flex items-center gap-2">'
-        f'<span class="material-symbols-outlined text-secondary" style="font-variation-settings:\'FILL\' 1">pie_chart</span>'
-        f'Recommended Asset Allocation</h3>'
-        f'<div class="flex flex-col md:flex-row items-center gap-8">'
-        f'<div class="w-[200px] h-[200px] shrink-0 relative">'
-        f'<canvas id="allocation-chart"></canvas>'
-        f'<div class="absolute inset-0 flex items-center justify-center flex-col pointer-events-none">'
-        f'<div class="text-[10px] font-bold tracking-widest uppercase text-on-surface-variant/50">Risk Level</div>'
-        f'<div class="text-2xl font-extrabold text-primary">{risk}/5</div>'
-        f'</div></div>'
-        f'<div class="flex-1 w-full">'
-        f'<p class="text-sm text-on-surface-variant mb-5 leading-relaxed">'
-        f'Based on your <strong>{risk_label}</strong> investor profile and a {years}-year horizon,'
-        f'we recommend diversifying your &#8377;{amount:,.0f} capital across these core asset classes.</p>'
-        + legend_html +
-        f'</div></div></div>'
-    )
+    strategy_html = _render_strategy_block(amount, risk, risk_label, years, alloc_labels, alloc_data, alloc_colors)
 
     risk_pct = int((risk / 5) * 100)
     multiplier = f"{best['projected']/amount:.2f}"
@@ -1645,30 +1688,7 @@ def render_prediction_html(amount, years, risk, results, best, username):
         '</div>'
 
         # Hero
-        '<div class="rounded-3xl overflow-hidden shadow-2xl mb-8" style="background:linear-gradient(135deg,#001b44 0%,#002f6c 55%,#006d43 100%)">'
-        '<div class="p-8 flex flex-col md:flex-row justify-between items-start gap-6">'
-        '<div class="flex-1">'
-        '<div class="inline-flex items-center gap-2 bg-white/10 text-secondary-fixed px-3 py-1.5 rounded-full text-[10px] font-extrabold uppercase tracking-widest mb-4">'
-        '<span class="material-symbols-outlined text-sm" style="font-variation-settings:\'FILL\' 1">verified</span>AI Recommended</div>'
-        f'<h3 class="text-2xl font-extrabold text-white mb-3 font-headline line-clamp-2">{escape(best["name"][:70])}{"..." if len(best["name"])>70 else ""}</h3>'
-        f'<p class="text-sm text-white/70 leading-relaxed max-w-xl">{reason}</p>'
-        '<div class="flex flex-wrap items-center gap-8 mt-6">'
-        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Asset Class</div><div class="text-sm font-extrabold text-secondary-fixed">{escape(best["type"])}</div></div>'
-        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Annual CAGR</div><div class="text-sm font-extrabold text-secondary-fixed">{best["rate"]*100:.2f}%</div></div>'
-        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Risk Level</div><div class="text-sm font-extrabold" style="color:{risk_col}">{escape(risk_label)}</div></div>'
-        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Multiplier</div><div class="text-sm font-extrabold text-secondary-fixed">{multiplier}&times;</div></div>'
-        '</div></div>'
-        '<div class="text-right shrink-0">'
-        '<div class="text-[10px] font-bold uppercase text-white/40 tracking-widest mb-2">Projected Wealth</div>'
-        f'<div class="text-5xl font-extrabold text-white font-mono tracking-tight">&#8377;{best["projected"]:,.0f}</div>'
-        f'<div class="mt-3 inline-flex items-center gap-1 bg-secondary/20 text-secondary-fixed border border-secondary/30 px-3 py-1.5 rounded-full text-sm font-extrabold">&#9650; +{best["gain_pct"]:.1f}% over {years} yrs</div>'
-        '</div></div>'
-        '<div class="bg-black/25 px-8 py-4 flex items-center gap-4">'
-        '<span class="text-[10px] font-bold uppercase text-white/40 tracking-widest shrink-0">Risk Tolerance</span>'
-        '<div class="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">'
-        f'<div class="h-full rounded-full" style="width:{risk_pct}%;background:{risk_col}"></div></div>'
-        f'<span class="text-xs font-extrabold shrink-0" style="color:{risk_col}">{risk}/5 &mdash; {risk_label}</span>'
-        '</div></div>'
+        _render_prediction_hero(best, reason, risk_col, risk_label, risk, risk_pct, multiplier, amount, years) +
 
         # Comparison bars
         '<div class="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-6 shadow-sm mb-8">'
@@ -1689,41 +1709,7 @@ def render_prediction_html(amount, years, risk, results, best, username):
         '</div></div>'
 
         # Chart.js
-        '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>'
-        '<script>'
-        f'const cData={charts_json};'
-        'const tc=document.getElementById("trend-charts");'
-        'cData.forEach((data,i)=>{'
-        'const wrap=document.createElement("div");'
-        'wrap.innerHTML=`'
-        '<div class="flex items-center gap-2 mb-3">'
-        '<span class="w-2.5 h-2.5 rounded-full inline-block" style="background:${data.color}"></span>'
-        '<span class="text-xs font-extrabold text-primary">${data.type}</span>'
-        '${data.is_best?\'<span class="ml-1 text-[9px] font-bold bg-secondary-container/30 text-secondary px-2 py-0.5 rounded-full uppercase tracking-widest">Top Pick</span>\':""}'
-        '</div>'
-        '<div style="height:130px;position:relative"><canvas id="trend-${i}"></canvas></div>`;'
-        'tc.appendChild(wrap);'
-        'if(!data.prices||data.prices.length<2){'
-        'wrap.querySelector("canvas").parentElement.innerHTML=\'<div class="h-full flex items-center justify-center text-xs text-on-surface-variant/40 italic">Insufficient data</div>\';'
-        'return;}'
-        'const ctx=document.getElementById("trend-"+i).getContext("2d");'
-        'const gr=ctx.createLinearGradient(0,0,0,130);'
-        'gr.addColorStop(0,data.color+"45");gr.addColorStop(1,data.color+"00");'
-        'new Chart(ctx,{type:"line",'
-        'data:{labels:data.dates,datasets:[{data:data.prices,borderColor:data.color,borderWidth:2,backgroundColor:gr,fill:true,tension:0.4,pointRadius:0}]},'
-        'options:{responsive:true,maintainAspectRatio:false,'
-        'plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>"&#8377;"+c.parsed.y.toLocaleString("en-IN")}}},'
-        'scales:{x:{display:false},y:{display:false,min:Math.min(...data.prices)*0.97}}}});'
-        '});\n'
-        
-        f'const allocInfo={alloc_json};'
-        'const aCtx=document.getElementById("allocation-chart").getContext("2d");'
-        'new Chart(aCtx, {'
-        '  type: "doughnut",'
-        '  data: { labels: allocInfo.labels, datasets: [{ data: allocInfo.data, backgroundColor: allocInfo.colors, borderWidth: 0, hoverOffset: 4 }] },'
-        '  options: { cutout: "75%", responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }'
-        '});'
-        '</script>'
+        _get_prediction_js(charts_json, alloc_json)
     )
     return result_page
 
