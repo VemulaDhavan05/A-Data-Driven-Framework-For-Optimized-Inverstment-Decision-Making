@@ -1,3 +1,8 @@
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import ssl
+from markupsafe import escape
 import sqlite3
 import random
 import re
@@ -20,6 +25,8 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import time
+import uuid
+import threading
 
 # Configure Logging for SonarQube Observability
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -27,8 +34,17 @@ logger = logging.getLogger(__name__)
 
 # ===== CONFIGURATION =====
 app = Flask(__name__)
-# Security Hotspot Fix: Secret Key for session signing
-app.secret_key = os.environ.get("FLASK_SECRET_KEY", "wealth_ai_prod_node_0x992")
+
+# Security Hardening: Environment-based configuration
+app.config.update(
+    SECRET_KEY=os.environ.get("FLASK_SECRET_KEY", os.urandom(32).hex()),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    # SESSION_COOKIE_SECURE=True, # Enable this if running behind HTTPS
+)
+
+# Alias for legacy code
+app.secret_key = app.config['SECRET_KEY']
  
 # ===== DATABASE =====
 DB_PATH = os.path.join(os.path.dirname(__file__), 'users.db')
@@ -73,9 +89,9 @@ def get_layout(content, user=None, title="Dashboard"):
         </a>
         </nav>
         <div class="p-6 border-t border-white/10 flex items-center gap-3">
-        <div class="w-10 h-10 rounded-full border-2 border-primary-container bg-surface-dim flex items-center justify-center font-bold text-primary">{user[0].upper()}</div>
+        <div class="w-10 h-10 rounded-full border-2 border-primary-container bg-surface-dim flex items-center justify-center font-bold text-primary">{escape(user[0]).upper()}</div>
         <div>
-        <p class="text-sm font-bold">{user}</p>
+        <p class="text-sm font-bold">{escape(user)}</p>
         <p class="text-[10px] text-on-primary-container uppercase tracking-wider">Investor</p>
         </div>
         </div>
@@ -94,7 +110,7 @@ def get_layout(content, user=None, title="Dashboard"):
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>WealthAI — {title}</title>
+<title>WealthAI — {escape(title)}</title>
 {SHARED_CSS}
 </head>
 <body class="bg-background text-on-background flex h-screen overflow-hidden">
@@ -121,7 +137,7 @@ def get_layout(content, user=None, title="Dashboard"):
 </div>
 </div>
 <div class="flex items-center gap-6">
-<h2 class="text-sm font-bold text-primary mr-4">{title}</h2>
+<h2 class="text-sm font-bold text-primary mr-4">{escape(title)}</h2>
 </div>
 </header>
 <!-- Scrollable Canvas -->
@@ -189,12 +205,7 @@ def init_db():
 init_db()
 import threading
 
-app = Flask(__name__)
-
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import ssl
+# Loaded mail components
 
 # ===== LOAD ENVIRONMENT VARIABLES FROM .ENV =====
 def load_env():
@@ -361,7 +372,7 @@ def show_otp_sim(username, code, otp_type, email=None):
     
     if not res["sent"]:
         print(f"--- FALLBACK OTP FOR {username} [{otp_type}]: {code} ---")
-app.secret_key = 'wealthai_super_secret_key_2024'
+# Redundant key assignment removed for security
 
 # ===== JOB STORE (in-memory, keyed by uuid) =====
 job_store = {}
@@ -774,8 +785,8 @@ def auth_page():
                 <span class="material-symbols-outlined text-primary">{icon}</span> 
                 <span>{mode_label}</span>
             </div>
-            {f'<div class="text-[10px] text-primary/60 uppercase tracking-tighter">Code: <b class="text-xs text-primary">{sim["code"]}</b></div>' if (is_sim or failed_send) else '<div class="text-[10px] opacity-70">Check your inbox for the key</div>'}
-            {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">Delivery Error: {sim.get("error", "Check logs")}</div>' if failed_send else ''}
+            {f'<div class="text-[10px] opacity-70">Internal Signal Transmitted (Simulation Mode)</div>' if (is_sim or failed_send) else '<div class="text-[10px] opacity-70">Check your inbox for the key</div>'}
+            {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">Delivery Error: Internal log generated</div>' if failed_send else ''}
             {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">SMTP Config Required for Email</div>' if is_sim else ''}
         </div>'''
     elif status == 'reset_otp_sent':
@@ -789,8 +800,8 @@ def auth_page():
                 <span class="material-symbols-outlined text-tertiary">lock_open</span> 
                 <span>{mode_label}</span>
             </div>
-            {f'<div class="text-[10px] text-tertiary/60 uppercase tracking-tighter">Reset Code: <b class="text-xs text-tertiary">{sim["code"]}</b></div>' if (is_sim or failed_send) else '<div class="text-[10px] opacity-70">Recovery signal broadcasted</div>'}
-            {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">Error: {sim.get("error", "Check terminal")}</div>' if failed_send else ''}
+            {f'<div class="text-[10px] opacity-70">Recovery Signal Transmitted (Simulation Mode)</div>' if (is_sim or failed_send) else '<div class="text-[10px] opacity-70">Recovery signal broadcasted</div>'}
+            {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">Status: Logged to terminal</div>' if failed_send else ''}
             {f'<div class="mt-1 px-2 py-0.5 bg-error/10 text-error rounded text-[9px] uppercase tracking-tighter">SMTP Config Required for Email</div>' if is_sim else ''}
         </div>'''
     elif status == 'password_reset_success':
@@ -1321,7 +1332,7 @@ def login():
                 return redirect(url_for('home'))
         return redirect(url_for('auth_page', error='invalid', user=username))
     except Exception as e:
-        print(f"Login Error: {e}")
+        logger.error(f"Login Error: {e}")
         return redirect(url_for('auth_page', error='system_busy', user=username))
 
 @app.route('/request-otp', methods=['POST'])
@@ -1399,7 +1410,6 @@ def logout():
     return redirect(url_for('auth_page'))
  
 # ===== PREDICT =====
-import uuid
 
 def _run_prediction_job(job_id, username, risk, years, amount):
     """Runs entirely in a background daemon thread so Flask is never blocked."""
@@ -1453,7 +1463,7 @@ def _run_prediction_job(job_id, username, risk, years, amount):
                 res = f.result(timeout=25)
                 if res: results.append(res)
             except Exception as e:
-                print(f"Worker error ({futures[f]}): {e}")
+                logger.error(f"Worker error ({futures[f]}): {e}")
 
     if not results:
         results.append({
@@ -1532,10 +1542,10 @@ def render_prediction_html(amount, years, risk, results, best, username):
 
     if best["type"] == "Stocks":
         reason = (f"Equities outperform over your {years}-year horizon at {best['rate']*100:.1f}% CAGR. "
-                  f"Stocks adapt to your '{risk_label}' risk level, capturing market upside while the long horizon smooths volatility.")
+                  f"Stocks adapt to your '{escape(risk_label)}' risk level, capturing market upside while the long horizon smooths volatility.")
     elif best["type"] == "Mutual Fund":
         reason = (f"Mutual Funds deliver {best['rate']*100:.1f}% p.a. risk-adjusted returns over {years} years. "
-                  f"Professional management and diversification make this the safest high-yield path for '{risk_label}' investors.")
+                  f"Professional management and diversification make this the safest high-yield path for '{escape(risk_label)}' investors.")
     else:
         if amount < 1000000:
             reason = (f"REITs give you {best['rate']*100:.1f}% exposure to India's booming property market "
@@ -1545,7 +1555,7 @@ def render_prediction_html(amount, years, risk, results, best, username):
                       f"providing wealth creation and asset security over {years} years.")
 
     charts_data = [
-        {"type": r["name"][:25] + ("..." if len(r["name"])>25 else ""), "is_best": i == 0,
+        {"type": escape(r["name"][:25]) + ("..." if len(r["name"])>25 else ""), "is_best": i == 0,
          "dates": r["chart_dates"], "prices": r["chart_prices"],
          "color": type_colors.get(r["type"], "#3c5d9c")}
         for i, r in enumerate(results)
@@ -1560,10 +1570,10 @@ def render_prediction_html(amount, years, risk, results, best, username):
         is_b = r["projected"] == best["projected"]
         nc   = "text-secondary" if is_b else "text-on-surface-variant"
         sh   = f";box-shadow:0 0 10px {col}80" if is_b else ""
-        name_trunc = r["name"][:35] + ("..." if len(r["name"])>35 else "")
+        name_trunc = escape(r["name"][:35]) + ("..." if len(r["name"])>35 else "")
         bar_rows += (
             f'<div class="flex items-center gap-4 py-3 border-b border-outline-variant/10 last:border-0">'
-            f'<div class="w-48 shrink-0 text-[11px] font-bold text-primary truncate" title="{r["name"]}">{name_trunc}</div>'
+            f'<div class="w-48 shrink-0 text-[11px] font-bold text-primary truncate" title="{escape(r["name"])}">{name_trunc}</div>'
             f'<div class="flex-1 h-3 bg-surface-container-high rounded-full overflow-hidden">'
             f'<div class="h-full rounded-full" style="width:{w}%;background:{col}{sh}"></div></div>'
             f'<div class="w-32 text-right text-sm font-extrabold {nc} font-mono shrink-0">&#8377;{r["projected"]:,.0f}</div>'
@@ -1640,12 +1650,12 @@ def render_prediction_html(amount, years, risk, results, best, username):
         '<div class="flex-1">'
         '<div class="inline-flex items-center gap-2 bg-white/10 text-secondary-fixed px-3 py-1.5 rounded-full text-[10px] font-extrabold uppercase tracking-widest mb-4">'
         '<span class="material-symbols-outlined text-sm" style="font-variation-settings:\'FILL\' 1">verified</span>AI Recommended</div>'
-        f'<h3 class="text-2xl font-extrabold text-white mb-3 font-headline line-clamp-2">{best["name"][:70]}{"..." if len(best["name"])>70 else ""}</h3>'
+        f'<h3 class="text-2xl font-extrabold text-white mb-3 font-headline line-clamp-2">{escape(best["name"][:70])}{"..." if len(best["name"])>70 else ""}</h3>'
         f'<p class="text-sm text-white/70 leading-relaxed max-w-xl">{reason}</p>'
         '<div class="flex flex-wrap items-center gap-8 mt-6">'
-        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Asset Class</div><div class="text-sm font-extrabold text-secondary-fixed">{best["type"]}</div></div>'
+        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Asset Class</div><div class="text-sm font-extrabold text-secondary-fixed">{escape(best["type"])}</div></div>'
         f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Annual CAGR</div><div class="text-sm font-extrabold text-secondary-fixed">{best["rate"]*100:.2f}%</div></div>'
-        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Risk Level</div><div class="text-sm font-extrabold" style="color:{risk_col}">{risk_label}</div></div>'
+        f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Risk Level</div><div class="text-sm font-extrabold" style="color:{risk_col}">{escape(risk_label)}</div></div>'
         f'<div><div class="text-[10px] uppercase text-white/40 font-bold tracking-widest mb-1">Multiplier</div><div class="text-sm font-extrabold text-secondary-fixed">{multiplier}&times;</div></div>'
         '</div></div>'
         '<div class="text-right shrink-0">'
@@ -1822,7 +1832,7 @@ def insights():
         return f'''
         <div class="bg-surface-container-lowest border border-outline-variant/10 rounded-2xl p-6 shadow-sm hover:shadow-md transition-all">
             <div class="text-xs font-bold uppercase tracking-widest text-on-surface-variant/60 mb-2 flex items-center gap-1">
-                <span class="material-symbols-outlined text-sm">{icon}</span>{label}
+                <span class="material-symbols-outlined text-sm">{escape(icon)}</span>{escape(label)}
             </div>
             <div class="text-3xl font-extrabold text-primary font-mono">{price:,.2f}</div>
             <div class="flex items-center gap-2 mt-2">
@@ -1840,8 +1850,8 @@ def insights():
         return f'''
         <div class="flex items-center justify-between py-3 border-b border-outline-variant/10 last:border-0">
             <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-[10px] font-extrabold text-on-surface-variant">{m['sym'][:3]}</div>
-                <span class="text-sm font-bold text-primary">{m['sym']}</span>
+                <div class="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-[10px] font-extrabold text-on-surface-variant">{escape(m['sym'][:3])}</div>
+                <span class="text-sm font-bold text-primary">{escape(m['sym'])}</span>
             </div>
             <div class="flex items-center gap-3">
                 <span class="text-xs text-on-surface-variant font-mono">₹{m['price']:,.1f}</span>
@@ -1858,7 +1868,7 @@ def insights():
         label_color = 'text-secondary' if pct >= 0 else 'text-error'
         return f'''
         <div class="flex items-center gap-3 py-2">
-            <span class="text-xs font-bold text-primary w-16 shrink-0">{s['name']}</span>
+            <span class="text-xs font-bold text-primary w-16 shrink-0">{escape(s['name'])}</span>
             <div class="flex-1 h-2 bg-surface-container-high rounded-full overflow-hidden">
                 <div class="h-full rounded-full" style="width:{w}%;background:{color}"></div>
             </div>
@@ -1875,7 +1885,7 @@ def insights():
         return f'''
         <div class="bg-surface-container-lowest border border-outline-variant/10 rounded-xl p-5 shadow-sm hover:shadow-md transition-all">
             <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-on-surface-variant/60 mb-2">
-                <span class="material-symbols-outlined text-sm text-secondary">{icon}</span>{label}
+                <span class="material-symbols-outlined text-sm text-secondary">{escape(icon)}</span>{escape(label)}
             </div>
             <div class="text-xl font-extrabold text-primary font-mono">{unit}{val:,.2f}</div>
             <div class="{color} text-xs font-bold mt-1">{arrow} {abs(pct or 0):.2f}% today</div>
@@ -2012,9 +2022,9 @@ def history():
         p_id = p[0]
         rows_html += f'''
         <tr onclick="window.location='/history/{p_id}'" class="border-b border-outline-variant/10 hover:bg-surface-container-lowest transition-colors cursor-pointer group">
-            <td class="py-4 px-6 text-xs font-bold font-mono group-hover:text-primary transition-colors">{p[7][:10]}</td>
+            <td class="py-4 px-6 text-xs font-bold font-mono group-hover:text-primary transition-colors">{escape(p[7][:10])}</td>
             <td class="py-4 text-sm font-bold text-primary">₹{p[3]:,.00f}</td>
-            <td class="py-4 text-xs text-on-surface-variant font-medium">{p[4]}</td>
+            <td class="py-4 text-xs text-on-surface-variant font-medium">{escape(p[4])}</td>
             <td class="py-4 text-sm font-bold text-secondary">₹{p[5]:,.00f}</td>
             <td class="py-4"><span class="px-2 py-1 bg-secondary-container/30 text-secondary text-[10px] font-bold rounded-lg">+{((p[5]-p[3])/p[3]*100):.1f}%</span></td>
         </tr>'''
