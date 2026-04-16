@@ -4,7 +4,8 @@ from email.mime.multipart import MIMEMultipart
 import ssl
 from markupsafe import escape
 import sqlite3
-import random
+import secrets
+random = secrets.SystemRandom()
 import re
 import dns.resolver
 import logging
@@ -37,15 +38,28 @@ app = Flask(__name__)
 
 # Security Hardening: Environment-based configuration
 app.config.update(
-    SECRET_KEY=os.environ.get("FLASK_SECRET_KEY", os.urandom(32).hex()),
+    SECRET_KEY=os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32)),
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    # SESSION_COOKIE_SECURE=True, # Enable this if running behind HTTPS
+    SESSION_COOKIE_SECURE=True,
 )
 
 # Alias for legacy code
 app.secret_key = app.config['SECRET_KEY']
- 
+
+# ===== CSRF SECURITY =====
+def generate_csrf_token():
+    if '_csrf_token' not in session:
+        session['_csrf_token'] = secrets.token_hex(32)
+    return session['_csrf_token']
+
+@app.before_request
+def csrf_protect():
+    if request.method == "POST":
+        token = session.get('_csrf_token', None)
+        if not token or token != request.form.get('_csrf_token'):
+            logger.warning("[SECURITY] Blocked Cross-Site Request Forgery (CSRF) Attempt.")
+            return Response("Access Denied: Invalid Security Token. Go back and reload the page.", status=403)
 # ===== DATABASE CONFIG =====
 DB_PATH = os.path.join(os.path.dirname(__file__), 'users.db')
 
@@ -819,12 +833,13 @@ def auth_page():
             </div>
 
             <form id="authForm" action="/login" method="POST" onsubmit="return validateBeforeSubmit()" class="space-y-7">
+                <input type="hidden" name="_csrf_token" value="{generate_csrf_token()}">
                 <!-- Username -->
                 <div id="usernameSection" class="group">
                     <label class="block text-[11px] font-black uppercase tracking-[0.25em] text-primary/60 ml-1 mb-2.5">Global Identity</label>
                     <div class="relative">
                         <span class="material-symbols-outlined absolute left-5 top-1/2 -translate-y-1/2 text-outline-variant text-[22px] group-focus-within:text-primary transition-colors">person_pin</span>
-                        <input type="text" name="username" value="{user_context}" required class="w-full pl-14 pr-6 py-5 bg-surface-container-low/50 border-2 border-transparent focus:border-primary/10 rounded-2xl text-base focus:ring-4 focus:ring-primary/5 transition-all text-primary font-bold placeholder:text-outline-variant/40" placeholder="e.g. s_wealth_01">
+                        <input type="text" name="username" value="{escape(user_context)}" required class="w-full pl-14 pr-6 py-5 bg-surface-container-low/50 border-2 border-transparent focus:border-primary/10 rounded-2xl text-base focus:ring-4 focus:ring-primary/5 transition-all text-primary font-bold placeholder:text-outline-variant/40" placeholder="e.g. s_wealth_01">
                     </div>
                 </div>
 
@@ -1023,7 +1038,7 @@ def auth_page():
             fetch('/validate-email-ajax', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
-                body: 'email=' + encodeURIComponent(email)
+                body: '_csrf_token={generate_csrf_token()}&email=' + encodeURIComponent(email)
             }})
             .then(r => r.json())
             .then(data => {{
@@ -1134,6 +1149,7 @@ def home():
             
             <div class="p-12">
                 <form action="/predict" method="post" id="mainForm" class="grid grid-cols-1 lg:grid-cols-12 gap-10">
+                    <input type="hidden" name="_csrf_token" value="{generate_csrf_token()}">
                     <!-- Left: Risk Selector (Spans 5) -->
                     <div class="lg:col-span-5 space-y-8">
                         <div>
