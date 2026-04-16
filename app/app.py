@@ -48,18 +48,11 @@ app.config.update(
 app.secret_key = app.config['SECRET_KEY']
 
 # ===== CSRF SECURITY =====
-def generate_csrf_token():
-    if '_csrf_token' not in session:
-        session['_csrf_token'] = secrets.token_hex(32)
-    return session['_csrf_token']
+from flask_wtf.csrf import CSRFProtect, generate_csrf
+csrf = CSRFProtect(app)
 
-@app.before_request
-def csrf_protect():
-    if request.method == "POST":
-        token = session.get('_csrf_token', None)
-        if not token or token != request.form.get('_csrf_token'):
-            logger.warning("[SECURITY] Blocked Cross-Site Request Forgery (CSRF) Attempt.")
-            return Response("Access Denied: Invalid Security Token. Go back and reload the page.", status=403)
+def generate_csrf_token():
+    return generate_csrf()
 # ===== DATABASE CONFIG =====
 DB_PATH = os.path.join(os.path.dirname(__file__), 'users.db')
 
@@ -207,10 +200,10 @@ def init_db():
     # Incremental update for existing databases
     try:
         cursor.execute("ALTER TABLE users ADD COLUMN email TEXT")
-    except: pass
+    except Exception as e: logger.debug("Ignored pass: %s", str(e))
     try:
         cursor.execute("ALTER TABLE predictions ADD COLUMN full_json TEXT")
-    except: pass
+    except Exception as e: logger.debug("Ignored pass: %s", str(e))
     
     conn.commit()
     conn.close()
@@ -274,6 +267,8 @@ def send_otp_email(target_email, code, otp_type="Verification"):
         msg.attach(MIMEText(body, 'html'))
 
         context = ssl.create_default_context()
+        context.check_hostname = True
+        context.verify_mode = ssl.CERT_REQUIRED
         with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT, context=context) as server:
             server.login(SMTP_USER, SMTP_PASS)
             server.send_message(msg)
@@ -396,11 +391,15 @@ REQUEST_HEADERS = {
 }
 
 def safe_json(url, timeout=4):
+    if not url.startswith(('https://api.mfapi.in', 'https://www.commonfloor.com')):
+        logger.warning("[SECURITY] Blocked SSRF Vector: %s", url)
+        return None
     try:
-        res = requests.get(url, timeout=timeout, headers=REQUEST_HEADERS)
+        res = requests.get(url, timeout=timeout, headers=REQUEST_HEADERS, verify=True)
         if res.status_code == 200 and res.text.strip():
             return res.json()
-    except:
+    except Exception as e:
+        logger.debug("Exception caught: %s", str(e))
         pass
     return None
 
@@ -414,7 +413,8 @@ def train_model():
         X = df[['risk', 'years']].values
         y = df['annual_rate'].values
         model.fit(X, y)
-    except:
+    except Exception as e:
+        logger.debug("Exception caught: %s", str(e))
         X = np.array([[1,1],[1,3],[1,5],[2,1],[2,3],[2,5],[3,1],[3,3],[3,5],[4,1],[4,3],[4,5],[5,1],[5,3],[5,5]])
         y = np.array([0.05,0.06,0.07,0.06,0.08,0.09,0.08,0.10,0.12,0.10,0.13,0.15,0.12,0.16,0.18])
         model.fit(X, y)
@@ -458,7 +458,8 @@ def get_best_stock(risk):
                 g = float((closes.iloc[-1] - closes.iloc[0]) / closes.iloc[0])
                 v = float(closes.pct_change().std())
                 results.append((sym, g, round(float(closes.iloc[-1]), 2), g*0.7 - v*0.3))
-            except:
+            except Exception as e:
+                logger.debug("Exception caught: %s", str(e))
                 continue
         if results:
             results.sort(key=lambda x: x[3], reverse=True)
@@ -475,7 +476,8 @@ def get_stock_chart_data(symbol, years=1):
         monthly_data = data['Close'].resample('ME').last()
         step = 3 if years > 5 else (2 if years >= 2 else 1)
         return [d.strftime('%b %Y') for d in monthly_data.index[::step]], [round(p, 2) for p in monthly_data.values[::step]]
-    except:
+    except Exception as e:
+        logger.debug("Exception caught: %s", str(e))
         return [], []
 
 def _get_mf_fallback_chart(years=1):
@@ -499,7 +501,8 @@ def get_mf_chart_data(mf_code, years=1):
         dates = [datetime.datetime.strptime(d["date"], "%d-%m-%Y").strftime('%b %Y') for d in data[::step]]
         prices = [float(d["nav"]) for d in data[::step]]
         return dates, prices
-    except:
+    except Exception as e:
+        logger.debug("Exception caught: %s", str(e))
         return _get_mf_fallback_chart(years)
 
 # ===== MUTUAL FUND =====
@@ -516,7 +519,8 @@ def get_best_mutual_fund():
             r_nav, o_nav = float(nd[0]["nav"]), float(nd[251]["nav"])
             name = nav.get("meta",{}).get("scheme_name", code)
             return (name, (r_nav - o_nav) / o_nav, code)
-        except:
+        except Exception as e:
+            logger.debug("Exception caught: %s", str(e))
             return None
 
     best = []
@@ -542,13 +546,17 @@ def get_real_estate(amount, risk):
         cities = ["Bangalore", "Mumbai", "Chennai", "Hyderabad", "Pune"]
         city = random.choice(cities)
         url = f"https://www.commonfloor.com/listing-search?city={city}&min_price={int(amount*0.8)}&max_price={int(amount*1.2)}"
+        if not url.startswith('https://www.commonfloor.com'):
+            logger.warning("[SECURITY] Blocked SSRF Vector in Real Estate: %s", url)
+            return None
         # Strict 4-second socket cut-off — never let this block Flask
-        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=4, allow_redirects=True)
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=4, allow_redirects=True, verify=True)
         soup = BeautifulSoup(r.text, 'html.parser')
         listings = [h2.text.strip() for h2 in soup.find_all('h2') if "Sale" in h2.text or "BHK" in h2.text]
         if listings:
             real_place = random.choice(listings)
-    except:
+    except Exception as e:
+        logger.debug("Exception caught: %s", str(e))
         pass
         
     if not real_place:
@@ -564,7 +572,8 @@ def get_real_estate(amount, risk):
         if len(closes) > 50:
             g = float((closes.iloc[-1] - closes.iloc[0]) / closes.iloc[0])
             return (real_place, g, 100, g, "^CNXREALTY")
-    except:
+    except Exception as e:
+        logger.debug("Exception caught: %s", str(e))
         pass
         
     return (real_place, 0.10, 100, 0.10, "Fallback")
@@ -635,7 +644,8 @@ def get_prediction_by_id(pred_id, username):
         row = cur.fetchone()
         conn.close()
         return row if row else None
-    except:
+    except Exception as e:
+        logger.debug("Exception caught: %s", str(e))
         return None
  
 # ===== SHARED CSS =====
@@ -833,7 +843,7 @@ def auth_page():
             </div>
 
             <form id="authForm" action="/login" method="POST" onsubmit="return validateBeforeSubmit()" class="space-y-7">
-                <input type="hidden" name="_csrf_token" value="{generate_csrf_token()}">
+                <input type="hidden" name="csrf_token" value="{generate_csrf_token()}">
                 <!-- Username -->
                 <div id="usernameSection" class="group">
                     <label class="block text-[11px] font-black uppercase tracking-[0.25em] text-primary/60 ml-1 mb-2.5">Global Identity</label>
@@ -1038,7 +1048,7 @@ def auth_page():
             fetch('/validate-email-ajax', {{
                 method: 'POST',
                 headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
-                body: '_csrf_token={generate_csrf_token()}&email=' + encodeURIComponent(email)
+                body: 'csrf_token={generate_csrf_token()}&email=' + encodeURIComponent(email)
             }})
             .then(r => r.json())
             .then(data => {{
@@ -1149,7 +1159,7 @@ def home():
             
             <div class="p-12">
                 <form action="/predict" method="post" id="mainForm" class="grid grid-cols-1 lg:grid-cols-12 gap-10">
-                    <input type="hidden" name="_csrf_token" value="{generate_csrf_token()}">
+                    <input type="hidden" name="csrf_token" value="{generate_csrf_token()}">
                     <!-- Left: Risk Selector (Spans 5) -->
                     <div class="lg:col-span-5 space-y-8">
                         <div>
@@ -1763,7 +1773,8 @@ def insights():
             if len(d) < 2: return None, None, None
             prev, curr = float(d['Close'].iloc[-2]), float(d['Close'].iloc[-1])
             return curr, (curr - prev), ((curr - prev) / prev) * 100
-        except:
+        except Exception as e:
+            logger.debug("Exception caught: %s", str(e))
             return None, None, None
 
     def _stock_movers():
@@ -1779,8 +1790,8 @@ def insights():
                     prev, curr = float(closes.iloc[-2]), float(closes.iloc[-1])
                     pct = ((curr - prev) / prev) * 100
                     results.append({'sym': sym.replace('.NS',''), 'price': curr, 'pct': pct})
-                except: continue
-        except: pass
+                except Exception as e: logger.debug("Ignored continue: %s", str(e)); continue
+        except Exception as e: logger.debug("Ignored pass: %s", str(e))
         results.sort(key=lambda x: x['pct'], reverse=True)
         return results[:5], results[-5:][::-1]
 
@@ -2075,7 +2086,8 @@ def history_detail(pred_id):
         data = json.loads(full_json_str)
         results = data.get("results", [])
         best = data.get("best", {})
-    except:
+    except Exception as e:
+        logger.debug("Exception caught: %s", str(e))
         return get_layout("<div class='p-20 text-center font-bold text-error'>Corrupted historical entry.</div>", user=username, title="Error")
         
     html_out = render_prediction_html(amount, years, risk, results, best, username)
@@ -2146,4 +2158,4 @@ def settings():
  
 if __name__ == '__main__':
     # Production Mode Finalization
-    app.run(debug=False, host='0.0.0.0', port=5005, use_reloader=False, threaded=True)
+    app.run(debug=False, host='127.0.0.1', port=5005, use_reloader=False, threaded=True)
